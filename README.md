@@ -22,7 +22,8 @@ Prebuilt DMG: [Releases](https://github.com/PotatoInfinity/downloader/releases/l
 ## Requirements
 
 - macOS 13 or later
-- Xcode or the Swift toolchain
+- Apple Silicon (arm64)
+- Xcode or the Swift toolchain to build
 
 ## Build
 
