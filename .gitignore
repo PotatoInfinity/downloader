@@ -1,0 +1,8 @@
+.DS_Store
+.build/
+.swiftpm/
+dist/
+tools/yt-dlp
+tools/ffmpeg
+tools/*.gz
+*.dmg
