@@ -3,19 +3,28 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="Downloader"
-VERSION="1.0"
+VERSION="1.1"
 BUILD_DIR="$ROOT/.build"
 DIST_DIR="$ROOT/dist"
 APP="$DIST_DIR/$APP_NAME.app"
 CONTENTS="$APP/Contents"
 RESOURCES="$CONTENTS/Resources"
 
+# Release signing: Developer ID + hardened runtime (notarize.md §3).
+# Override with CODESIGN_IDENTITY="..." for local dev builds.
+DEVID="${CODESIGN_IDENTITY:-Developer ID Application: Tien Nhut Truong (T4UWU7H9M9)}"
+TS_FLAG="--timestamp"
+case "$DEVID" in
+    "Developer ID Application:"*) TS_FLAG="--timestamp" ;;
+    *) TS_FLAG="--timestamp=none" ;;
+esac
+
 cd "$ROOT"
 
 "$ROOT/scripts/fetch_tools.sh"
 
-echo "Building release binary..."
-swift build -c release --product Downloader
+echo "Building release binary (universal arm64+x86_64)..."
+swift build -c release --arch arm64 --arch x86_64 --product Downloader
 
 echo "Generating app icon..."
 swift scripts/make_icon.swift >/dev/null
@@ -58,7 +67,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key>
     <string>$VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
     <key>LSMinimumSystemVersion</key>
@@ -75,12 +84,29 @@ PLIST
 
 printf 'APPL????' > "$CONTENTS/PkgInfo"
 
-echo "Signing..."
+echo "Signing (nested-first, outer-last, no --deep)..."
 xattr -cr "$APP" || true
-codesign --force --sign - --timestamp=none "$RESOURCES/yt-dlp"
-codesign --force --sign - --timestamp=none "$RESOURCES/ffmpeg"
-codesign --force --sign - --timestamp=none "$APP"
+codesign --force --options runtime "$TS_FLAG" --sign "$DEVID" --identifier local.downloader.app.yt-dlp "$RESOURCES/yt-dlp"
+codesign --force --options runtime "$TS_FLAG" --sign "$DEVID" --identifier local.downloader.app.ffmpeg "$RESOURCES/ffmpeg"
+codesign --force --options runtime "$TS_FLAG" --sign "$DEVID" --identifier local.downloader.app "$CONTENTS/MacOS/$APP_NAME"
+codesign --force --options runtime "$TS_FLAG" --sign "$DEVID" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
+# Fail closed for release: must be Developer ID / Team T4UWU7H9M9.
+if [[ "$DEVID" == "Developer ID Application:"* ]]; then
+    TEAM="$(codesign -dv --verbose=4 "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+    if [[ "$TEAM" != "T4UWU7H9M9" ]]; then
+        echo "ERROR: sealed TeamIdentifier '$TEAM' != T4UWU7H9M9." >&2
+        exit 1
+    fi
+    echo "Universal arch gate..."
+    lipo -verify_arch arm64 "$CONTENTS/MacOS/$APP_NAME"
+    lipo -verify_arch x86_64 "$CONTENTS/MacOS/$APP_NAME"
+    lipo -verify_arch arm64 "$RESOURCES/ffmpeg"
+    lipo -verify_arch x86_64 "$RESOURCES/ffmpeg"
+    lipo -verify_arch arm64 "$RESOURCES/yt-dlp"
+    lipo -verify_arch x86_64 "$RESOURCES/yt-dlp"
+    lipo -info "$CONTENTS/MacOS/$APP_NAME" "$RESOURCES/ffmpeg" "$RESOURCES/yt-dlp"
+fi
 
 echo "Built: $APP"
 du -sh "$APP"
